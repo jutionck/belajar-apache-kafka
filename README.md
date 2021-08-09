@@ -31,6 +31,8 @@
 > **Node**: A node is a single computer in the Apache Kafka cluster.
 > 
 > **Cluster**: A cluster is a group of nodes i.e., a group of computers.
+> 
+> Read more : https://docs.google.com/document/d/1lG0z2lKBoJHAQtiu342qDzHJOGpZmg3-Z4Ly_4BFRSg/edit?usp=sharing
 
 ## Step
 
