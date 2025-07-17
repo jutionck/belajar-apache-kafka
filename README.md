@@ -1,5 +1,9 @@
 ## Kafka
 
+**[NEW]** Baca dokumentasi terbaru disini ![Kafka Raft](https://github.com/jutionck/belajar-apache-kafka/blob/main/KRAFT.md)
+
+---
+
 > Aplikasi yang biasa digunakan untuk publish (sebagai pengirim data) dan subscribe (yang menerima data). Ada sebuah pertanyaan, terus bedanya apa sama database ? Database jika kita simpan ya akan tersimpan, jika kita ambil kita akan get data di database, untuk kafka alurnya adalah akan mengirim dimana aplikasi tersedia yang melakukan subscribe akan menerima pesan yang dikirimkan.
 > 
 > Artikel dari amazon web services tentang publisher dan subscribe messaging https://aws.amazon.com/pub-sub-messaging/
