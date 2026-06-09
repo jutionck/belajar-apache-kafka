@@ -79,22 +79,71 @@ Sebelumnya menjalankan `zookeeper-server-start.sh`. Berikut cara saat ini menggu
 
 ---
 
-### 4. Menguji Topic, Producer, dan Consumer
+### 4. Konfigurasi Dasar KRaft (`server.properties`)
+
+Sebelum menjalankan broker, pastikan file `config/kraft/server.properties` memiliki properti inti berikut:
+
+```properties
+# ID unik broker/controller dalam cluster
+node.id=1
+
+# Untuk local dev: node ini berperan sebagai broker dan controller
+process.roles=broker,controller
+
+# Listener untuk client dan quorum controller
+listeners=PLAINTEXT://:9092,CONTROLLER://:9093
+advertised.listeners=PLAINTEXT://localhost:9092
+listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+inter.broker.listener.name=PLAINTEXT
+controller.listener.names=CONTROLLER
+
+# Daftar voter controller (format: nodeId@host:port)
+controller.quorum.voters=1@localhost:9093
+
+# Direktori penyimpanan log
+log.dirs=/tmp/kraft-combined-logs
+
+# Faktor replikasi metadata internal (1 untuk single-node dev)
+offsets.topic.replication.factor=1
+transaction.state.log.replication.factor=1
+transaction.state.log.min.isr=1
+```
+
+Untuk local development satu node, konfigurasi di atas sudah cukup. Untuk produksi multi-node, lihat bagian **Setup Production KRaft Cluster**.
+
+---
+
+### 5. Menguji Topic, Producer, dan Consumer
 
 Cara berinteraksi melalui *command-line* tetap sama.
 
-1.  **Buat Topic:**
+1.  **Buat Topic (dengan jumlah partisi dan replika):**
     ```bash
-    bin/kafka-topics.sh --create --topic belajar-kafka-raft --bootstrap-server localhost:9092
+    bin/kafka-topics.sh \
+      --create \
+      --topic belajar-kafka-raft \
+      --partitions 3 \
+      --replication-factor 1 \
+      --bootstrap-server localhost:9092
     ```
 
-2.  **Jalankan Console Producer:**
+2.  **Lihat daftar topic:**
+    ```bash
+    bin/kafka-topics.sh --list --bootstrap-server localhost:9092
+    ```
+
+3.  **Lihat detail topic:**
+    ```bash
+    bin/kafka-topics.sh --describe --topic belajar-kafka-raft --bootstrap-server localhost:9092
+    ```
+
+4.  **Jalankan Console Producer:**
     ```bash
     bin/kafka-console-producer.sh --topic belajar-kafka-raft --bootstrap-server localhost:9092
     ```
     > Ketik beberapa pesan di sini, lalu tekan Enter setelah setiap pesan.
 
-3.  **Jalankan Console Consumer (di terminal terpisah):**
+5.  **Jalankan Console Consumer (di terminal terpisah):**
     ```bash
     bin/kafka-console-consumer.sh --topic belajar-kafka-raft --bootstrap-server localhost:9092 --from-beginning
     ```
@@ -155,11 +204,14 @@ package com.belajarkafka;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.errors.SerializationException;
+import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Properties;
+import java.util.concurrent.ExecutionException;
 
 public class KafkaProducerKraft {
 
@@ -174,39 +226,33 @@ public class KafkaProducerKraft {
         properties.setProperty(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         properties.setProperty(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
 
-        // 2. Buat instance KafkaProducer
-        KafkaProducer<String, String> producer = new KafkaProducer<>(properties);
-
-        // 3. Buat record yang akan dikirim
-        String topic = "belajar-kafka-v2";
+        String topic = "belajar-kafka-raft";
         String value = "Halo dari Java! Pesan ini dikirim ke Kafka modern (KRaft).";
-        String key = "id_" + System.currentTimeMillis(); // Key bersifat opsional
+        String key = "id_" + System.currentTimeMillis();
 
-        ProducerRecord<String, String> producerRecord =
-                new ProducerRecord<>(topic, key, value);
+        try (KafkaProducer<String, String> producer = new KafkaProducer<>(properties)) {
+            ProducerRecord<String, String> producerRecord = new ProducerRecord<>(topic, key, value);
 
-        // 4. Kirim data (bersifat asynchronous)
-        producer.send(producerRecord, (metadata, exception) -> {
-            // Callback ini akan dieksekusi setiap kali record berhasil dikirim atau ada exception
-            if (exception == null) {
-                // Record berhasil dikirim
-                log.info("Pesan berhasil dikirim! \n" +
-                        "Topic: " + metadata.topic() + "\n" +
-                        "Key: " + producerRecord.key() + "\n" +
-                        "Partition: " + metadata.partition() + "\n" +
-                        "Offset: " + metadata.offset() + "\n" +
-                        "Timestamp: " + metadata.timestamp());
-            } else {
-                log.error("Gagal mengirim pesan", exception);
-            }
-        });
-
-        // 5. Flush dan tutup Producer
-        // Karena send() bersifat asynchronous, kita perlu flush untuk memastikan pesan terkirim sebelum aplikasi berakhir.
-        producer.flush();
-        producer.close();
-
-        log.info("Producer selesai.");
+            // Gunakan get() agar error pengiriman bisa ditangkap dengan jelas
+            var metadata = producer.send(producerRecord).get();
+            log.info("Pesan berhasil dikirim! \n" +
+                    "Topic: " + metadata.topic() + "\n" +
+                    "Key: " + producerRecord.key() + "\n" +
+                    "Partition: " + metadata.partition() + "\n" +
+                    "Offset: " + metadata.offset() + "\n" +
+                    "Timestamp: " + metadata.timestamp());
+        } catch (TimeoutException e) {
+            log.error("Timeout saat mengirim pesan ke broker Kafka", e);
+        } catch (SerializationException e) {
+            log.error("Gagal serialisasi key/value pesan", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("Thread terinterupsi saat menunggu hasil pengiriman", e);
+        } catch (ExecutionException e) {
+            log.error("Gagal mengirim pesan (execution error)", e.getCause());
+        } catch (Exception e) {
+            log.error("Terjadi error tak terduga pada Producer", e);
+        }
     }
 }
 ```
@@ -221,6 +267,11 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.errors.GroupAuthorizationException;
+import org.apache.kafka.common.errors.TopicAuthorizationException;
+import org.apache.kafka.common.errors.TimeoutException;
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
+import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -228,6 +279,7 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class KafkaConsumerKraft {
 
@@ -249,22 +301,45 @@ public class KafkaConsumerKraft {
 
         // 2. Buat instance KafkaConsumer
         KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties);
+        AtomicBoolean running = new AtomicBoolean(true);
 
-        // 3. Berlangganan (subscribe) ke topic
+        // 3. Graceful shutdown saat aplikasi dihentikan (Ctrl+C / SIGTERM)
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            log.info("Shutdown hook dipanggil, menghentikan consumer...");
+            running.set(false);
+            consumer.wakeup(); // Memaksa poll() keluar
+        }));
+
+        // 4. Berlangganan (subscribe) ke topic
         consumer.subscribe(Collections.singletonList(topic));
 
-        // 4. Poll untuk data baru dalam sebuah loop tak terbatas
-        while (true) {
-            ConsumerRecords<String, String> records =
-                    consumer.poll(Duration.ofMillis(1000)); // Timeout 1 detik
-
-            for (ConsumerRecord<String, String> record : records) {
-                log.info("Pesan diterima! \n" +
-                        "Key: " + record.key() + ", " +
-                        "Value: " + record.value() + "\n" +
-                        "Partition: " + record.partition() + ", " +
-                        "Offset: " + record.offset());
+        try {
+            // 5. Poll untuk data baru sampai shutdown diminta
+            while (running.get()) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(1000));
+                for (ConsumerRecord<String, String> record : records) {
+                    log.info("Pesan diterima! \n" +
+                            "Key: " + record.key() + ", " +
+                            "Value: " + record.value() + "\n" +
+                            "Partition: " + record.partition() + ", " +
+                            "Offset: " + record.offset());
+                }
             }
+        } catch (WakeupException e) {
+            if (running.get()) {
+                throw e; // WakeupException di luar alur shutdown normal
+            }
+        } catch (TimeoutException e) {
+            log.error("Timeout saat polling data dari broker Kafka", e);
+        } catch (TopicAuthorizationException | GroupAuthorizationException e) {
+            log.error("Consumer tidak memiliki izin akses topic/group", e);
+        } catch (UnknownTopicOrPartitionException e) {
+            log.error("Topic tidak ditemukan atau partisi belum tersedia", e);
+        } catch (Exception e) {
+            log.error("Terjadi error tak terduga pada Consumer", e);
+        } finally {
+            consumer.close();
+            log.info("Kafka Consumer ditutup dengan aman.");
         }
     }
 }
@@ -297,3 +372,111 @@ public class KafkaConsumerKraft {
     ```
 
 Di terminal consumer, Anda akan melihat pesan yang dikirim oleh producer muncul.
+
+---
+
+## Setup Production KRaft Cluster (Multi-Broker)
+
+Untuk production, jalankan minimal **3 node** agar quorum controller tetap tersedia saat satu node gagal.
+
+Contoh ringkas `server.properties` per node:
+
+```properties
+# Node 1
+node.id=1
+process.roles=broker,controller
+listeners=PLAINTEXT://kafka-1:9092,CONTROLLER://kafka-1:9093
+advertised.listeners=PLAINTEXT://kafka-1:9092
+controller.listener.names=CONTROLLER
+inter.broker.listener.name=PLAINTEXT
+listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+controller.quorum.voters=1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+log.dirs=/var/lib/kafka/data
+
+# Node 2 (ubah node.id, listeners, advertised.listeners, log.dirs)
+node.id=2
+listeners=PLAINTEXT://kafka-2:9092,CONTROLLER://kafka-2:9093
+advertised.listeners=PLAINTEXT://kafka-2:9092
+
+# Node 3 (ubah node.id, listeners, advertised.listeners, log.dirs)
+node.id=3
+listeners=PLAINTEXT://kafka-3:9092,CONTROLLER://kafka-3:9093
+advertised.listeners=PLAINTEXT://kafka-3:9092
+```
+
+Rekomendasi tambahan production:
+
+* Gunakan `default.replication.factor=3` dan `min.insync.replicas=2`.
+* Pisahkan node controller dan broker bila beban tinggi.
+* Gunakan storage cepat (SSD/NVMe) dan monitoring aktif.
+
+---
+
+## Security Dasar (SSL/TLS, SASL, ACL)
+
+### 1. SSL/TLS (enkripsi komunikasi)
+
+```properties
+listeners=SSL://:9092,CONTROLLER://:9093
+advertised.listeners=SSL://kafka-1:9092
+listener.security.protocol.map=CONTROLLER:PLAINTEXT,SSL:SSL
+ssl.keystore.location=/etc/kafka/secrets/kafka.server.keystore.jks
+ssl.keystore.type=PKCS12
+ssl.client.auth=required
+ssl.truststore.location=/etc/kafka/secrets/kafka.server.truststore.jks
+ssl.truststore.type=PKCS12
+```
+
+### 2. SASL Authentication
+
+Kafka mendukung SASL (mis. `SCRAM-SHA-256`, `SCRAM-SHA-512`, `PLAIN`, `OAUTHBEARER`) untuk autentikasi client dan antar broker. Untuk production, kombinasi umum adalah **SASL_SSL**.
+
+### 3. ACL Authorization
+
+Aktifkan authorizer dan buat ACL agar akses topic tidak terbuka untuk semua user:
+
+```bash
+bin/kafka-acls.sh --bootstrap-server kafka-1:9092 \
+  --add --allow-principal User:app-producer \
+  --operation Write --topic belajar-kafka-raft
+
+bin/kafka-acls.sh --bootstrap-server kafka-1:9092 \
+  --add --allow-principal User:app-consumer \
+  --operation Read --topic belajar-kafka-raft --group kafka-raft
+```
+
+---
+
+## Monitoring & Troubleshooting
+
+### Health check cepat
+
+```bash
+# Cek status API broker
+bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+
+# Cek metadata cluster dan node controller
+bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status
+
+# Cek konfigurasi broker tertentu
+bin/kafka-configs.sh --bootstrap-server localhost:9092 --entity-type brokers --entity-name 1 --describe
+```
+
+### Metric penting yang perlu dimonitor
+
+* **Broker availability:** broker up/down, controller active.
+* **Request latency:** produce/fetch request latency.
+* **Throughput:** bytes in/out per broker dan per topic.
+* **Consumer lag:** keterlambatan consumer group terhadap latest offset.
+* **Under-replicated partitions:** indikator replikasi tidak sehat.
+
+### Skenario error umum dan solusi singkat
+
+1. **`TimeoutException` saat producer send/poll consumer**  
+   Periksa konektivitas host/port broker, listener, dan firewall.
+2. **`TopicAuthorizationException` / `GroupAuthorizationException`**  
+   Verifikasi ACL user/principal pada topic dan consumer group.
+3. **Topic tidak ditemukan (`UnknownTopicOrPartitionException`)**  
+   Buat topic terlebih dulu atau periksa salah ketik nama topic.
+4. **Consumer tidak menerima data**  
+   Cek `group.id`, offset (`--from-beginning`), dan pastikan producer benar-benar mengirim ke topic yang sama.
