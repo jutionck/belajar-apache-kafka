@@ -1,482 +1,822 @@
-# Apache Kafka Raft
+# Apache Kafka dengan KRaft
 
-### Pendahuluan
+Dokumen ini adalah bahan ajar teknis untuk trainee dengan tingkat pengalaman campuran. Bagian **Wajib** ditujukan untuk seluruh trainee, sedangkan bagian **Pendalaman** dapat digunakan instruktur untuk menjelaskan cara kerja dan pertimbangan operasional Kafka.
 
-Selamat datang di panduan Apache Kafka yang telah diperbarui! Sejak awal tahun 2020-an, Apache Kafka telah mengalami evolusi paling signifikan dalam sejarahnya. Ketergantungan pada Apache ZooKeeper, yang selama bertahun-tahun menjadi komponen wajib untuk manajemen klaster, kini telah dihilangkan.
+Contoh dalam dokumen menggunakan:
 
-Panduan ini akan berfokus pada cara modern dalam menggunakan Kafka, yaitu dengan mode **KRaft (Kafka Raft Metadata mode)**, yang kini menjadi standar utama. Kita akan membahas mengapa perubahan ini terjadi dan bagaimana Anda bisa memulai dengan arsitektur Kafka yang lebih sederhana, lebih cepat, dan lebih skalabel.
+- Apache Kafka 4.3 dalam mode KRaft
+- Java 17 atau lebih baru untuk menjalankan broker Kafka
+- Java, Node.js, dan Go sebagai contoh aplikasi client
 
----
-
-### 1. Konsep Inti yang Tetap Relevan
-
-Meskipun arsitektur di balik layar telah berubah, fundamental cara Anda berinteraksi dengan Kafka sebagai pengembang sebagian besar tetap sama. Konsep-konsep ini masih menjadi pilar utama:
-
-*   **Producer:** Aplikasi yang mengirimkan (mempublikasikan) aliran data/pesan.
-*   **Consumer:** Aplikasi yang menerima (berlangganan) aliran data/pesan.
-*   **Broker:** Server Kafka yang menyimpan data. Beberapa broker membentuk sebuah *cluster*.
-*   **Topic:** Kategori atau nama *feed* tempat pesan disimpan dan dipublikasikan. Ibarat sebuah tabel di database.
-*   **Partition:** Sebuah *topic* dipecah menjadi beberapa *partition* untuk memungkinkan skalabilitas dan pemrosesan paralel.
-*   **Offset:** ID unik berurutan yang diberikan Kafka untuk setiap pesan dalam sebuah partisi.
-
-**Intinya:** Logika bisnis aplikasi Anda yang menggunakan Producer dan Consumer API tidak banyak berubah. Perubahan terbesarnya ada di sisi operasional dan arsitektur.
+> **Catatan versi:** Kafka 4.x hanya menggunakan KRaft. ZooKeeper tetap dibahas secara singkat agar trainee dapat memahami dokumentasi atau sistem Kafka lama.
 
 ---
 
-### 2. Perubahan Terbesar: Selamat Tinggal ZooKeeper, Selamat Datang KRaft!
+## Hasil Belajar
 
-Ini adalah inti dari pembaruan Kafka.
+Setelah menyelesaikan materi dan praktik, trainee diharapkan mampu:
 
-**Dulu (Dengan ZooKeeper):**
-Kafka menggunakan ZooKeeper untuk tugas-tugas kritis seperti:
-*   Menyimpan metadata klaster (info broker, konfigurasi topic, ACL).
-*   Memilih *controller* (broker yang bertanggung jawab mengelola state partisi).
+1. Menjelaskan peran broker, controller, producer, consumer, topic, partition, replica, dan offset.
+2. Menjelaskan perbedaan metadata cluster dan data event.
+3. Menjalankan Kafka KRaft satu node untuk development.
+4. Membuat topic serta mengirim dan membaca event melalui CLI.
+5. Menghubungkan aplikasi Java, Node.js, atau Go ke Kafka.
+6. Menjelaskan pengaruh key terhadap partition dan ordering.
+7. Menjelaskan hubungan partition, consumer group, offset, dan consumer lag.
+8. Mengidentifikasi perbedaan konfigurasi development dan production.
 
-Ini menciptakan arsitektur di mana Anda harus mengelola dan mengamankan dua sistem terdistribusi yang berbeda, yang menambah kerumitan operasional.
+## Rekomendasi Alur Pengajaran
 
-**Sekarang (Dengan KRaft):**
-Kafka sekarang dapat mengelola metadatanya sendiri menggunakan protokol konsensus yang disebut **Raft**. Beberapa broker ditunjuk sebagai *controller* dan mereka bertanggung jawab untuk menjaga konsistensi metadata di seluruh klaster.
+| Sesi | Fokus | Durasi perkiraan |
+|---|---|---:|
+| 1 | Mental model Kafka dan KRaft | 45 menit |
+| 2 | Lab CLI: topic, producer, consumer, group | 60 menit |
+| 3 | Lab aplikasi: Java, Node.js, atau Go | 90 menit |
+| 4 | Reliability, operasi, dan troubleshooting | 60 menit |
 
-**Keuntungan Utama KRaft:**
+Untuk kelas dengan level campuran:
 
-1.  **Arsitektur yang Lebih Sederhana:** Anda hanya perlu menginstal, mengonfigurasi, dan memonitor satu sistem: Kafka. Tidak ada lagi klaster ZooKeeper yang terpisah.
-2.  **Skalabilitas Masif:** Kafka dengan KRaft dapat mendukung jumlah partisi yang jauh lebih besar (hingga jutaan) dalam satu klaster, sesuatu yang sulit dicapai dengan ZooKeeper.
-3.  **Startup dan Pemulihan Lebih Cepat:** Waktu yang dibutuhkan klaster untuk pulih dari kegagalan (misalnya, memilih controller baru) jauh lebih singkat dibandingkan dengan arsitektur berbasis ZooKeeper.
-
----
-
-### 3. Instalasi Modern Kafka dengan KRaft (Lokal)
-
-Sebelumnya menjalankan `zookeeper-server-start.sh`. Berikut cara saat ini menggunakan Kafka tanpa Zookeeper.
-
-**Prasyarat:**
-*   Java Development Kit (JDK) versi 11 atau 17 terinstal.
-
-**Langkah-langkah:**
-
-1.  **Unduh dan Ekstrak Apache Kafka**
-    Unduh versi stabil terbaru (misalnya, 4.x) dari situs resmi Apache Kafka dan ekstrak arsipnya.
-
-2.  **Buat ID untuk Klaster Anda**
-    Setiap klaster Kafka baru dengan mode KRaft memerlukan ID unik. Jalankan perintah berikut dari direktori root Kafka Anda:
-    ```bash
-    bin/kafka-storage.sh random-uuid
-    ```
-    Salin output UUID yang muncul (contoh: `rA5hAWnyS_y-42A42aA4bQ`).
-
-3.  **Format Direktori Penyimpanan (Log)**
-    Ganti `YOUR_CLUSTER_ID` dengan UUID yang Anda dapatkan dari langkah sebelumnya. Perintah ini akan menginisialisasi direktori log Anda dengan ID klaster.
-    ```bash
-    bin/kafka-storage.sh format -t YOUR_CLUSTER_ID -c config/kraft/server.properties
-    ```
-
-4.  **Jalankan Server Kafka**
-    Sekarang, Anda bisa langsung menjalankan server Kafka. Perhatikan bahwa kita menggunakan file konfigurasi dari direktori `config/kraft/`.
-    ```bash
-    bin/kafka-server-start.sh config/kraft/server.properties
-    ```
-    Selesai! Server Kafka Anda sekarang berjalan dalam mode KRaft, tanpa ZooKeeper.
+- Semua trainee mengerjakan lab CLI terlebih dahulu.
+- Trainee memilih satu bahasa untuk lab aplikasi.
+- Trainee berpengalaman mengerjakan eksperimen partition, consumer group, dan kegagalan broker sebagai latihan tambahan.
 
 ---
 
-### 4. Konfigurasi Dasar KRaft (`server.properties`)
+## 1. Mental Model Kafka (Wajib)
 
-Sebelum menjalankan broker, pastikan file `config/kraft/server.properties` memiliki properti inti berikut:
+Apache Kafka adalah platform **distributed event streaming**. Aplikasi menulis event ke Kafka, Kafka menyimpan event secara berurutan, dan satu atau lebih aplikasi lain dapat membacanya.
 
-```properties
-# ID unik broker/controller dalam cluster
-node.id=1
+Contoh event:
 
-# Untuk local dev: node ini berperan sebagai broker dan controller
-process.roles=broker,controller
-
-# Listener untuk client dan quorum controller
-listeners=PLAINTEXT://:9092,CONTROLLER://:9093
-advertised.listeners=PLAINTEXT://localhost:9092
-listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-inter.broker.listener.name=PLAINTEXT
-controller.listener.names=CONTROLLER
-
-# Daftar voter controller (format: nodeId@host:port)
-controller.quorum.voters=1@localhost:9093
-
-# Direktori penyimpanan log
-log.dirs=/tmp/kraft-combined-logs
-
-# Faktor replikasi metadata internal (1 untuk single-node dev)
-offsets.topic.replication.factor=1
-transaction.state.log.replication.factor=1
-transaction.state.log.min.isr=1
+```json
+{
+  "eventId": "evt-1001",
+  "customerId": "customer-42",
+  "type": "ORDER_CREATED",
+  "total": 175000
+}
 ```
 
-Untuk local development satu node, konfigurasi di atas sudah cukup. Untuk produksi multi-node, lihat bagian **Setup Production KRaft Cluster**.
+### Komponen utama
+
+| Komponen | Tanggung jawab |
+|---|---|
+| **Producer** | Mengirim event ke topic. |
+| **Consumer** | Membaca event dari topic. |
+| **Broker** | Menerima, menyimpan, dan menyajikan data event. |
+| **Topic** | Nama log atau kategori event, misalnya `orders`. |
+| **Partition** | Pecahan topic yang menjadi unit penyimpanan dan paralelisme. |
+| **Offset** | Posisi event yang meningkat secara berurutan dalam satu partition. |
+| **Replica** | Salinan partition pada broker lain untuk fault tolerance. |
+| **Controller** | Mengelola metadata cluster, bukan melayani aliran data aplikasi secara normal. |
+
+### Topic bukan tabel database
+
+Analogi topic sebagai tabel dapat membantu di awal, tetapi memiliki batas:
+
+- Event di topic umumnya tidak diperbarui di tempat.
+- Event baru ditambahkan ke ujung log.
+- Offset adalah posisi dalam partition, bukan ID bisnis.
+- Data lama dihapus berdasarkan kebijakan retention atau compaction.
+- Consumer mengelola progres baca masing-masing.
+
+### Partition, key, dan ordering
+
+Kafka hanya menjamin urutan event **di dalam satu partition**, bukan di seluruh topic.
+
+Producer biasanya menentukan partition berdasarkan key:
+
+```text
+key customer-42 -> partition 1
+key customer-99 -> partition 0
+```
+
+Jika semua event milik `customer-42` memakai key yang sama, event tersebut biasanya masuk ke partition yang sama dan urutannya dapat dipertahankan.
+
+> **Pertanyaan untuk trainee:** Jika sebuah topic memiliki tiga partition, apakah Kafka menjamin seluruh event dalam topic dapat dibaca sesuai urutan waktu global?
+
+Jawaban: tidak. Ordering hanya dijamin per partition.
+
+### Consumer group
+
+Consumer yang menggunakan `group.id` yang sama bekerja sebagai satu kelompok:
+
+- Satu partition hanya diberikan kepada satu consumer aktif dalam group yang sama.
+- Satu consumer dapat menerima beberapa partition.
+- Jika jumlah consumer lebih banyak daripada jumlah partition, sebagian consumer akan idle.
+- Group yang berbeda dapat membaca event yang sama secara independen.
+
+Contoh topic dengan tiga partition:
+
+```text
+orders
+├── partition 0 -> consumer A
+├── partition 1 -> consumer B
+└── partition 2 -> consumer A
+```
+
+Offset yang telah diproses disimpan per **consumer group + topic + partition**.
+
+### Delivery semantics
+
+Istilah yang perlu dibedakan:
+
+| Semantik | Arti praktis |
+|---|---|
+| **At-most-once** | Event mungkin hilang, tetapi tidak diproses ulang. |
+| **At-least-once** | Event tidak sengaja hilang, tetapi mungkin diproses lebih dari sekali. |
+| **Exactly-once** | Efek pemrosesan terjadi tepat sekali dalam batas sistem dan konfigurasi tertentu. |
+
+Pendekatan umum aplikasi adalah **at-least-once** dengan handler yang idempotent. Contohnya, simpan `eventId` yang sudah diproses agar retry tidak membuat order kedua.
 
 ---
 
-### 5. Menguji Topic, Producer, dan Consumer
+## 2. Apa Itu KRaft? (Wajib)
 
-Cara berinteraksi melalui *command-line* tetap sama.
+KRaft adalah arsitektur metadata Kafka yang menggunakan protokol konsensus berbasis Raft. KRaft menggantikan ZooKeeper sebagai tempat pengelolaan metadata cluster.
 
-1.  **Buat Topic (dengan jumlah partisi dan replika):**
-    ```bash
-    bin/kafka-topics.sh \
-      --create \
-      --topic belajar-kafka-raft \
-      --partitions 3 \
-      --replication-factor 1 \
-      --bootstrap-server localhost:9092
-    ```
+### Data event dan metadata adalah dua hal berbeda
 
-2.  **Lihat daftar topic:**
-    ```bash
-    bin/kafka-topics.sh --list --bootstrap-server localhost:9092
-    ```
+```text
+Client application
+       |
+       | produce / fetch event
+       v
+  Kafka broker(s)  ---------- menyimpan data topic dan partition
+       |
+       | membaca perubahan metadata
+       v
+ KRaft controller quorum ----- menyimpan metadata cluster
+```
 
-3.  **Lihat detail topic:**
-    ```bash
-    bin/kafka-topics.sh --describe --topic belajar-kafka-raft --bootstrap-server localhost:9092
-    ```
+Contoh metadata cluster:
 
-4.  **Jalankan Console Producer:**
-    ```bash
-    bin/kafka-console-producer.sh --topic belajar-kafka-raft --bootstrap-server localhost:9092
-    ```
-    > Ketik beberapa pesan di sini, lalu tekan Enter setelah setiap pesan.
+- broker yang aktif;
+- daftar topic dan partition;
+- lokasi replica dan partition leader;
+- konfigurasi cluster;
+- ACL dan informasi operasional lain.
 
-5.  **Jalankan Console Consumer (di terminal terpisah):**
-    ```bash
-    bin/kafka-console-consumer.sh --topic belajar-kafka-raft --bootstrap-server localhost:9092 --from-beginning
-    ```
-    > Anda akan melihat pesan yang Anda ketik di producer muncul di sini.
+KRaft menyimpan perubahan metadata sebagai log internal yang direplikasi oleh controller quorum. Salah satu controller menjadi **active controller**; controller lain mengikuti log metadata dan siap mengambil alih.
+
+### Mengapa quorum memerlukan mayoritas?
+
+Perubahan metadata hanya dapat dilanjutkan jika mayoritas controller voter tersedia.
+
+| Jumlah controller | Mayoritas | Kegagalan yang dapat ditoleransi |
+|---:|---:|---:|
+| 1 | 1 | 0 |
+| 3 | 2 | 1 |
+| 5 | 3 | 2 |
+
+Rumus toleransi kegagalan untuk jumlah voter ganjil:
+
+```text
+toleransi = (jumlah_controller - 1) / 2
+```
+
+Satu controller cukup untuk lab lokal, tetapi bukan untuk production.
+
+### Peran node KRaft
+
+Properti `process.roles` menentukan peran proses Kafka:
+
+```properties
+# Broker saja
+process.roles=broker
+
+# Controller saja
+process.roles=controller
+
+# Broker dan controller dalam satu proses
+process.roles=broker,controller
+```
+
+Mode gabungan cocok untuk development. Untuk deployment production yang penting, gunakan controller dan broker terpisah agar beban broker tidak mengganggu quorum metadata.
+
+### Perbandingan singkat
+
+| Aspek | Kafka lama dengan ZooKeeper | Kafka dengan KRaft |
+|---|---|---|
+| Penyimpanan metadata | ZooKeeper | Metadata log internal Kafka |
+| Controller election | Dikoordinasikan melalui ZooKeeper | Dipilih oleh controller quorum |
+| Sistem yang dioperasikan | Kafka dan ZooKeeper | Kafka |
+| Kafka 4.x | Tidak didukung | Satu-satunya mode |
 
 ---
 
-## Contoh Program dengan Java (Maven)
+## 3. Lab Lokal: Menjalankan Kafka KRaft (Wajib)
 
-### Struktur Proyek: `pom.xml`
-Buat proyek Maven dan gunakan `pom.xml` berikut untuk mengelola dependensi.
+### Prasyarat
+
+- Java 17 atau lebih baru
+- Apache Kafka 4.3 binary distribution
+- Terminal Linux, macOS, atau WSL
+
+Periksa Java:
+
+```bash
+java -version
+```
+
+Masuk ke direktori hasil ekstraksi Kafka sebelum menjalankan perintah berikut.
+
+### 3.1 Format storage dan jalankan broker
+
+Generate cluster ID:
+
+```bash
+KAFKA_CLUSTER_ID="$(bin/kafka-storage.sh random-uuid)"
+echo "$KAFKA_CLUSTER_ID"
+```
+
+Format storage untuk cluster standalone:
+
+```bash
+bin/kafka-storage.sh format \
+  --standalone \
+  --cluster-id "$KAFKA_CLUSTER_ID" \
+  --config config/server.properties
+```
+
+Jalankan Kafka:
+
+```bash
+bin/kafka-server-start.sh config/server.properties
+```
+
+> `format` dilakukan saat membuat storage cluster baru, bukan setiap kali broker dinyalakan. Melakukan format ulang pada storage yang digunakan dapat menghilangkan metadata cluster.
+
+Alternatif cepat dengan image resmi:
+
+```bash
+docker run --name kafka-lab --rm -p 9092:9092 apache/kafka:4.3.0
+```
+
+### 3.2 Verifikasi broker dan metadata quorum
+
+Buka terminal baru:
+
+```bash
+bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+```
+
+```bash
+bin/kafka-metadata-quorum.sh \
+  --bootstrap-server localhost:9092 \
+  describe --status
+```
+
+Perhatikan nilai berikut:
+
+- `ClusterId`: identitas cluster;
+- `LeaderId`: active controller;
+- `CurrentVoters`: anggota controller quorum;
+- `HighWatermark`: metadata yang telah dikomit oleh quorum.
+
+### 3.3 Buat dan periksa topic
+
+```bash
+bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --create \
+  --topic orders \
+  --partitions 3 \
+  --replication-factor 1
+```
+
+```bash
+bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --describe \
+  --topic orders
+```
+
+Replication factor `1` hanya sesuai untuk lab satu broker.
+
+### 3.4 Kirim event dengan key
+
+```bash
+bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic orders \
+  --property parse.key=true \
+  --property key.separator=:
+```
+
+Masukkan beberapa baris:
+
+```text
+customer-42:{"eventId":"evt-1001","type":"ORDER_CREATED"}
+customer-99:{"eventId":"evt-1002","type":"ORDER_CREATED"}
+customer-42:{"eventId":"evt-1003","type":"ORDER_PAID"}
+```
+
+### 3.5 Baca event sebagai consumer group
+
+```bash
+bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic orders \
+  --group order-workers \
+  --from-beginning \
+  --property print.key=true \
+  --property print.partition=true \
+  --property print.offset=true
+```
+
+Periksa posisi dan lag consumer group:
+
+```bash
+bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --describe \
+  --group order-workers
+```
+
+Kolom penting:
+
+- `CURRENT-OFFSET`: offset berikutnya yang akan dibaca group;
+- `LOG-END-OFFSET`: ujung log partition saat ini;
+- `LAG`: selisih antara ujung log dan posisi group.
+
+### 3.6 Eksperimen kelas
+
+1. Jalankan dua consumer dengan `group.id` yang sama. Amati pembagian partition.
+2. Jalankan consumer ketiga dan keempat. Amati consumer yang idle.
+3. Jalankan consumer dengan group baru. Buktikan bahwa event yang sama dapat dibaca ulang.
+4. Kirim beberapa event dengan key yang sama. Periksa apakah partition-nya sama.
+
+---
+
+## 4. Lab Aplikasi Multi-Bahasa
+
+Semua contoh berikut memakai kontrak yang sama:
+
+```text
+bootstrap server : localhost:9092
+topic            : orders
+key              : customer-42
+consumer group   : order-workers-<bahasa>
+```
+
+Gunakan key untuk menjaga affinity event bisnis. Gunakan JSON hanya untuk memudahkan lab; dalam sistem production, tentukan schema dan strategi evolusinya secara eksplisit.
+
+Contoh kode berfokus pada penggunaan Kafka client. Lengkapi `import`, entrypoint, dan graceful shutdown sesuai struktur proyek masing-masing bahasa.
+
+### 4.1 Java
+
+Dependency Maven:
 
 ```xml
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
-
-    <groupId>com.belajarkafka</groupId>
-    <artifactId>kafka-raft</artifactId>
-    <version>1.0-SNAPSHOT</version>
-
-    <properties>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    </properties>
-
-    <dependencies>
-        <!-- Dependensi untuk Apache Kafka Clients -->
-        <dependency>
-            <groupId>org.apache.kafka</groupId>
-            <artifactId>kafka-clients</artifactId>
-            <version>3.7.0</version> <!-- Gunakan versi client yang stabil dan modern -->
-        </dependency>
-
-        <!-- Dependensi untuk Logging (opsional tapi sangat direkomendasikan) -->
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>2.0.7</version>
-        </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-            <version>2.0.7</version>
-        </dependency>
-    </dependencies>
-</project>
+<dependency>
+  <groupId>org.apache.kafka</groupId>
+  <artifactId>kafka-clients</artifactId>
+  <version>4.3.0</version>
+</dependency>
 ```
-### 1. Program Kafka Producer (Java)
 
-Buat file `KafkaProducerKraft.java` di dalam `src/main/java/com/belajarkafka/`.
+Producer:
 
 ```java
-package com.belajarkafka;
+Properties props = new Properties();
+props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+props.put(ProducerConfig.ACKS_CONFIG, "all");
 
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.errors.SerializationException;
-import org.apache.kafka.common.errors.TimeoutException;
-import org.apache.kafka.common.serialization.StringSerializer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+    ProducerRecord<String, String> record = new ProducerRecord<>(
+        "orders",
+        "customer-42",
+        "{\"eventId\":\"evt-java-1\",\"type\":\"ORDER_CREATED\"}"
+    );
 
-import java.util.Properties;
-import java.util.concurrent.ExecutionException;
+    RecordMetadata metadata = producer.send(record).get();
+    System.out.printf(
+        "partition=%d offset=%d%n",
+        metadata.partition(),
+        metadata.offset()
+    );
+}
+```
 
-public class KafkaProducerKraft {
+Consumer:
 
-    private static final Logger log = LoggerFactory.getLogger(KafkaProducerKraft.class);
+```java
+Properties props = new Properties();
+props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+props.put(ConsumerConfig.GROUP_ID_CONFIG, "order-workers-java");
+props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
 
-    public static void main(String[] args) {
-        log.info("Membuat Kafka Producer...");
+try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+    consumer.subscribe(List.of("orders"));
 
-        // 1. Definisikan properti untuk Producer
-        Properties properties = new Properties();
-        properties.setProperty(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
-        properties.setProperty(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        properties.setProperty(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-
-        String topic = "belajar-kafka-raft";
-        String value = "Halo dari Java! Pesan ini dikirim ke Kafka modern (KRaft).";
-        String key = "id_" + System.currentTimeMillis();
-
-        try (KafkaProducer<String, String> producer = new KafkaProducer<>(properties)) {
-            ProducerRecord<String, String> producerRecord = new ProducerRecord<>(topic, key, value);
-
-            // Gunakan get() agar error pengiriman bisa ditangkap dengan jelas
-            var metadata = producer.send(producerRecord).get();
-            log.info("Pesan berhasil dikirim! \n" +
-                    "Topic: " + metadata.topic() + "\n" +
-                    "Key: " + producerRecord.key() + "\n" +
-                    "Partition: " + metadata.partition() + "\n" +
-                    "Offset: " + metadata.offset() + "\n" +
-                    "Timestamp: " + metadata.timestamp());
-        } catch (TimeoutException e) {
-            log.error("Timeout saat mengirim pesan ke broker Kafka", e);
-        } catch (SerializationException e) {
-            log.error("Gagal serialisasi key/value pesan", e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Thread terinterupsi saat menunggu hasil pengiriman", e);
-        } catch (ExecutionException e) {
-            log.error("Gagal mengirim pesan (execution error)", e.getCause());
-        } catch (Exception e) {
-            log.error("Terjadi error tak terduga pada Producer", e);
+    while (true) {
+        ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(1));
+        for (ConsumerRecord<String, String> record : records) {
+            System.out.printf(
+                "key=%s partition=%d offset=%d value=%s%n",
+                record.key(), record.partition(), record.offset(), record.value()
+            );
+            // Jalankan proses bisnis sebelum commit.
         }
+        consumer.commitSync();
     }
 }
 ```
-### 2. Program Kafka Consumer (Java)
 
-Buat file `KafkaConsumerKraft.java` di dalam `src/main/java/com/belajarkafka/`.
+### 4.2 Node.js
 
-```java
-package com.belajarkafka;
+Contoh menggunakan KafkaJS:
 
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.common.errors.GroupAuthorizationException;
-import org.apache.kafka.common.errors.TopicAuthorizationException;
-import org.apache.kafka.common.errors.TimeoutException;
-import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
-import org.apache.kafka.common.errors.WakeupException;
-import org.apache.kafka.common.serialization.StringDeserializer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+```bash
+npm install kafkajs
+```
 
-import java.time.Duration;
-import java.util.Collections;
-import java.util.Properties;
-import java.util.concurrent.atomic.AtomicBoolean;
+Producer:
 
-public class KafkaConsumerKraft {
+```javascript
+const { Kafka } = require("kafkajs");
 
-    private static final Logger log = LoggerFactory.getLogger(KafkaConsumerKraft.class);
+const kafka = new Kafka({
+  clientId: "orders-node-producer",
+  brokers: ["localhost:9092"],
+});
 
-    public static void main(String[] args) {
-        log.info("Membuat Kafka Consumer...");
+const producer = kafka.producer();
 
-        String groupId = "kafka-raft";
-        String topic = "belajar-kafka-raft";
+async function main() {
+  await producer.connect();
+  await producer.send({
+    topic: "orders",
+    messages: [
+      {
+        key: "customer-42",
+        value: JSON.stringify({
+          eventId: "evt-node-1",
+          type: "ORDER_CREATED",
+        }),
+      },
+    ],
+  });
+  await producer.disconnect();
+}
 
-        // 1. Definisikan properti untuk Consumer
-        Properties properties = new Properties();
-        properties.setProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
-        properties.setProperty(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        properties.setProperty(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-        properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"); // Mulai baca dari paling awal
+main().catch(console.error);
+```
 
-        // 2. Buat instance KafkaConsumer
-        KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties);
-        AtomicBoolean running = new AtomicBoolean(true);
+Consumer:
 
-        // 3. Graceful shutdown saat aplikasi dihentikan (Ctrl+C / SIGTERM)
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            log.info("Shutdown hook dipanggil, menghentikan consumer...");
-            running.set(false);
-            consumer.wakeup(); // Memaksa poll() keluar
-        }));
+```javascript
+const { Kafka } = require("kafkajs");
 
-        // 4. Berlangganan (subscribe) ke topic
-        consumer.subscribe(Collections.singletonList(topic));
+const kafka = new Kafka({
+  clientId: "orders-node-consumer",
+  brokers: ["localhost:9092"],
+});
 
-        try {
-            // 5. Poll untuk data baru sampai shutdown diminta
-            while (running.get()) {
-                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(1000));
-                for (ConsumerRecord<String, String> record : records) {
-                    log.info("Pesan diterima! \n" +
-                            "Key: " + record.key() + ", " +
-                            "Value: " + record.value() + "\n" +
-                            "Partition: " + record.partition() + ", " +
-                            "Offset: " + record.offset());
-                }
-            }
-        } catch (WakeupException e) {
-            if (running.get()) {
-                throw e; // WakeupException di luar alur shutdown normal
-            }
-        } catch (TimeoutException e) {
-            log.error("Timeout saat polling data dari broker Kafka", e);
-        } catch (TopicAuthorizationException | GroupAuthorizationException e) {
-            log.error("Consumer tidak memiliki izin akses topic/group", e);
-        } catch (UnknownTopicOrPartitionException e) {
-            log.error("Topic tidak ditemukan atau partisi belum tersedia", e);
-        } catch (Exception e) {
-            log.error("Terjadi error tak terduga pada Consumer", e);
-        } finally {
-            consumer.close();
-            log.info("Kafka Consumer ditutup dengan aman.");
-        }
-    }
+const consumer = kafka.consumer({ groupId: "order-workers-node" });
+
+async function main() {
+  await consumer.connect();
+  await consumer.subscribe({ topic: "orders", fromBeginning: true });
+  await consumer.run({
+    eachMessage: async ({ partition, message }) => {
+      console.log({
+        key: message.key?.toString(),
+        partition,
+        offset: message.offset,
+        value: message.value?.toString(),
+      });
+    },
+  });
+}
+
+main().catch(console.error);
+```
+
+### 4.3 Go
+
+Contoh menggunakan `kafka-go`:
+
+```bash
+go get github.com/segmentio/kafka-go
+```
+
+Producer:
+
+```go
+writer := &kafka.Writer{
+	Addr:     kafka.TCP("localhost:9092"),
+	Topic:    "orders",
+	Balancer: &kafka.Hash{},
+}
+defer writer.Close()
+
+err := writer.WriteMessages(context.Background(), kafka.Message{
+	Key:   []byte("customer-42"),
+	Value: []byte(`{"eventId":"evt-go-1","type":"ORDER_CREATED"}`),
+})
+if err != nil {
+	log.Fatal(err)
 }
 ```
-### Cara Menjalankan Program Java
 
-**Prasyarat:**
+Consumer:
 
-*   Pastikan Kafka Server Anda sudah berjalan dalam mode KRaft.
-*   Pastikan topic `belajar-kafka-raft` sudah dibuat.
+```go
+reader := kafka.NewReader(kafka.ReaderConfig{
+	Brokers:     []string{"localhost:9092"},
+	Topic:       "orders",
+	GroupID:     "order-workers-go",
+	StartOffset: kafka.FirstOffset,
+})
+defer reader.Close()
 
-**Langkah-langkah:**
+for {
+	message, err := reader.FetchMessage(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
 
-1.  **Kompilasi Proyek:**
-    Buka terminal di direktori root proyek Anda dan jalankan:
-    ```bash
-    mvn clean package
-    ```
+	log.Printf(
+		"key=%s partition=%d offset=%d value=%s",
+		message.Key,
+		message.Partition,
+		message.Offset,
+		message.Value,
+	)
 
-2.  **Jalankan Consumer:**
-    Buka terminal **pertama** dan jalankan:
-    ```bash
-    mvn exec:java -Dexec.mainClass="com.belajarkafka.KafkaConsumerKraft"
-    ```
+	// Jalankan proses bisnis sebelum commit.
+	if err := reader.CommitMessages(context.Background(), message); err != nil {
+		log.Fatal(err)
+	}
+}
+```
 
-3.  **Jalankan Producer:**
-    Buka terminal **kedua** dan jalankan:
-    ```bash
-    mvn exec:java -Dexec.mainClass="com.belajarkafka.KafkaProducerKraft"
-    ```
+### Perbandingan istilah client
 
-Di terminal consumer, Anda akan melihat pesan yang dikirim oleh producer muncul.
+| Konsep | Java | Node.js/KafkaJS | Go/kafka-go |
+|---|---|---|---|
+| Alamat awal cluster | `bootstrap.servers` | `brokers` | `Brokers` / `Addr` |
+| Consumer group | `group.id` | `groupId` | `GroupID` |
+| Membaca event | `poll()` | `consumer.run()` | `FetchMessage()` |
+| Commit eksplisit | `commitSync()` | konfigurasi commit di consumer | `CommitMessages()` |
+
+API setiap library berbeda, tetapi konsep Kafka yang mendasarinya tetap sama.
 
 ---
 
-## Setup Production KRaft Cluster (Multi-Broker)
+## 5. Pendalaman Teknis untuk Instruktur
 
-Untuk production, jalankan minimal **3 node** agar quorum controller tetap tersedia saat satu node gagal.
+### 5.1 Alur produce
 
-Contoh ringkas `server.properties` per node:
+Secara ringkas:
+
+1. Producer menggunakan `bootstrap.servers` untuk menemukan cluster.
+2. Producer meminta metadata topic dan partition.
+3. Partitioner memilih partition, biasanya berdasarkan key.
+4. Producer mengirim record ke leader partition.
+5. Leader menulis record dan replica follower mereplikasi data.
+6. Broker mengirim acknowledgement sesuai konfigurasi `acks`.
+
+`bootstrap.servers` tidak harus berisi semua broker. Client menggunakannya sebagai titik awal untuk menemukan metadata cluster.
+
+### 5.2 Leader, replica, ISR, dan acknowledgement
+
+- Setiap partition memiliki satu leader.
+- Producer dan consumer berkomunikasi dengan leader partition.
+- Replica follower menyalin log dari leader.
+- ISR atau **in-sync replicas** adalah replica yang cukup mengikuti leader.
+- `acks=all` meminta acknowledgement berdasarkan replica yang memenuhi aturan durability cluster.
+
+Konfigurasi production yang lazim untuk data penting:
 
 ```properties
-# Node 1
-node.id=1
-process.roles=broker,controller
-listeners=PLAINTEXT://kafka-1:9092,CONTROLLER://kafka-1:9093
-advertised.listeners=PLAINTEXT://kafka-1:9092
-controller.listener.names=CONTROLLER
-inter.broker.listener.name=PLAINTEXT
-listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-controller.quorum.voters=1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
-log.dirs=/var/lib/kafka/data
-
-# Node 2 (ubah node.id, listeners, advertised.listeners, log.dirs)
-node.id=2
-listeners=PLAINTEXT://kafka-2:9092,CONTROLLER://kafka-2:9093
-advertised.listeners=PLAINTEXT://kafka-2:9092
-
-# Node 3 (ubah node.id, listeners, advertised.listeners, log.dirs)
-node.id=3
-listeners=PLAINTEXT://kafka-3:9092,CONTROLLER://kafka-3:9093
-advertised.listeners=PLAINTEXT://kafka-3:9092
+default.replication.factor=3
+min.insync.replicas=2
 ```
 
-Rekomendasi tambahan production:
-
-* Gunakan `default.replication.factor=3` dan `min.insync.replicas=2`.
-* Pisahkan node controller dan broker bila beban tinggi.
-* Gunakan storage cepat (SSD/NVMe) dan monitoring aktif.
-
----
-
-## Security Dasar (SSL/TLS, SASL, ACL)
-
-### 1. SSL/TLS (enkripsi komunikasi)
+Pada producer:
 
 ```properties
-listeners=SSL://:9092,CONTROLLER://:9093
-advertised.listeners=SSL://kafka-1:9092
-listener.security.protocol.map=CONTROLLER:PLAINTEXT,SSL:SSL
-ssl.keystore.location=/etc/kafka/secrets/kafka.server.keystore.jks
-ssl.keystore.type=PKCS12
-ssl.client.auth=required
-ssl.truststore.location=/etc/kafka/secrets/kafka.server.truststore.jks
-ssl.truststore.type=PKCS12
+acks=all
+enable.idempotence=true
 ```
 
-### 2. SASL Authentication
+Konfigurasi ini meningkatkan durability, tetapi tidak menggantikan desain retry, idempotency, observability, dan disaster recovery.
 
-Kafka mendukung SASL (mis. `SCRAM-SHA-256`, `SCRAM-SHA-512`, `PLAIN`, `OAUTHBEARER`) untuk autentikasi client dan antar broker. Untuk production, kombinasi umum adalah **SASL_SSL**.
+### 5.3 Offset dan commit
 
-### 3. ACL Authorization
+Membaca event dan melakukan commit offset adalah dua tindakan berbeda.
 
-Aktifkan authorizer dan buat ACL agar akses topic tidak terbuka untuk semua user:
-
-```bash
-bin/kafka-acls.sh --bootstrap-server kafka-1:9092 \
-  --add --allow-principal User:app-producer \
-  --operation Write --topic belajar-kafka-raft
-
-bin/kafka-acls.sh --bootstrap-server kafka-1:9092 \
-  --add --allow-principal User:app-consumer \
-  --operation Read --topic belajar-kafka-raft --group kafka-raft
+```text
+fetch event -> proses bisnis -> commit offset
 ```
+
+Jika consumer gagal setelah proses bisnis tetapi sebelum commit, event dapat dibaca ulang. Karena itu, handler at-least-once harus idempotent.
+
+> Commit offset menandai progres baca. Commit bukan acknowledgement yang menghapus event dari Kafka.
+
+### 5.4 Rebalance
+
+Rebalance terjadi ketika pembagian partition dalam consumer group perlu dihitung ulang, misalnya saat:
+
+- consumer bergabung atau keluar;
+- consumer dianggap gagal;
+- jumlah partition berubah;
+- subscription berubah.
+
+Selama rebalance, pemrosesan dapat tertunda. Monitor durasi proses, interval poll, error consumer, dan lag.
+
+### 5.5 Retention dan compaction
+
+Kafka memiliki dua pola kebijakan penyimpanan utama:
+
+- **Delete retention**: event lama dihapus berdasarkan waktu atau ukuran.
+- **Log compaction**: Kafka mempertahankan nilai terbaru untuk setiap key, tanpa menjamin hanya ada satu record per key setiap saat.
+
+Retention tidak bergantung pada apakah event sudah dibaca consumer.
+
+### 5.6 Static dan dynamic controller quorum
+
+Kafka modern mendukung dynamic controller quorum. Pada dynamic quorum:
+
+- `controller.quorum.bootstrap.servers` membantu node menemukan quorum;
+- membership controller dapat diubah dengan tooling KRaft;
+- `controller.quorum.voters` tidak digunakan.
+
+Static quorum lama mendefinisikan seluruh voter melalui `controller.quorum.voters`. Jangan mencampur konfigurasi static dan dynamic quorum tanpa memahami proses format serta upgrade cluster.
+
+Untuk lab standalone, perintah `kafka-storage.sh format --standalone` menyiapkan dynamic quorum satu controller.
 
 ---
 
-## Monitoring & Troubleshooting
+## 6. Production Readiness
 
-### Health check cepat
+Konfigurasi lab sebelumnya **bukan** konfigurasi production. Sebelum production, putuskan dan uji hal berikut.
+
+### Topologi dan availability
+
+- Gunakan tiga atau lima dedicated controller sesuai target toleransi kegagalan.
+- Gunakan beberapa broker dan replication factor yang sesuai.
+- Sebarkan replica dan controller pada failure domain yang berbeda.
+- Uji kehilangan broker dan controller secara terencana.
+- Tetapkan kapasitas disk, network, dan retention berdasarkan beban.
+
+### Reliability aplikasi
+
+- Tentukan key berdasarkan kebutuhan ordering.
+- Aktifkan idempotent producer untuk mengurangi duplikasi akibat retry.
+- Tentukan retry, timeout, dan dead-letter strategy.
+- Buat consumer handler idempotent.
+- Tentukan kapan offset di-commit.
+- Gunakan schema dan strategi kompatibilitas event.
+
+### Security
+
+- Gunakan TLS untuk enkripsi koneksi.
+- Gunakan SASL atau mekanisme autentikasi yang sesuai.
+- Terapkan ACL dengan prinsip least privilege.
+- Pisahkan credential tiap aplikasi dan environment.
+- Jangan menggunakan listener `PLAINTEXT` terbuka pada jaringan yang tidak tepercaya.
+
+### Monitoring minimum
+
+- broker dan controller availability;
+- offline dan under-replicated partitions;
+- produce/fetch request latency dan error rate;
+- bytes in/out dan kapasitas disk;
+- consumer lag per group;
+- controller quorum health dan metadata lag;
+- jumlah serta durasi consumer rebalance.
+
+---
+
+## 7. Troubleshooting
+
+### `TimeoutException` atau client tidak terhubung
+
+Periksa:
+
+1. Broker benar-benar aktif.
+2. Host dan port dapat dijangkau dari mesin client.
+3. `advertised.listeners` berisi alamat yang dapat dijangkau client.
+4. DNS, firewall, TLS, dan autentikasi sesuai.
+
+`listeners` menentukan tempat broker menerima koneksi. `advertised.listeners` menentukan alamat yang diberitahukan broker kepada client.
+
+### Consumer tidak menerima event
+
+Periksa:
 
 ```bash
-# Cek status API broker
-bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092
-
-# Cek metadata cluster dan node controller
-bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status
-
-# Cek konfigurasi broker tertentu
-bin/kafka-configs.sh --bootstrap-server localhost:9092 --entity-type brokers --entity-name 1 --describe
+bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --describe \
+  --topic orders
 ```
 
-### Metric penting yang perlu dimonitor
+```bash
+bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --describe \
+  --group order-workers
+```
 
-* **Broker availability:** broker up/down, controller active.
-* **Request latency:** produce/fetch request latency.
-* **Throughput:** bytes in/out per broker dan per topic.
-* **Consumer lag:** keterlambatan consumer group terhadap latest offset.
-* **Under-replicated partitions:** indikator replikasi tidak sehat.
+Kemungkinan penyebab:
 
-### Skenario error umum dan solusi singkat
+- producer dan consumer menggunakan topic berbeda;
+- consumer group sudah berada di akhir log;
+- consumer lain dalam group menerima partition;
+- deserialization gagal;
+- consumer berhenti melakukan poll;
+- ACL tidak mengizinkan read atau akses group.
 
-1. **`TimeoutException` saat producer send/poll consumer**  
-   Periksa konektivitas host/port broker, listener, dan firewall.
-2. **`TopicAuthorizationException` / `GroupAuthorizationException`**  
-   Verifikasi ACL user/principal pada topic dan consumer group.
-3. **Topic tidak ditemukan (`UnknownTopicOrPartitionException`)**  
-   Buat topic terlebih dulu atau periksa salah ketik nama topic.
-4. **Consumer tidak menerima data**  
-   Cek `group.id`, offset (`--from-beginning`), dan pastikan producer benar-benar mengirim ke topic yang sama.
+### Cluster tidak memiliki quorum controller
+
+Gejala umum adalah perubahan metadata tidak dapat dilakukan, misalnya pembuatan topic gagal.
+
+Periksa:
+
+```bash
+bin/kafka-metadata-quorum.sh \
+  --bootstrap-server localhost:9092 \
+  describe --status
+```
+
+Pastikan mayoritas controller voter tersedia dan saling terhubung.
+
+### Kesalahan umum saat lab
+
+| Kesalahan | Dampak |
+|---|---|
+| Menjalankan `format` setiap startup | Berisiko membuat ulang metadata storage. |
+| Menganggap offset sebagai ID event | ID tidak unik lintas partition. |
+| Menambah consumer melebihi jumlah partition | Sebagian consumer idle. |
+| Tidak memakai key untuk event yang harus berurutan | Event dapat tersebar ke partition berbeda. |
+| Menganggap commit menghapus event | Event tetap mengikuti retention topic. |
+| Menyamakan konfigurasi satu node dengan production | Tidak memiliki fault tolerance. |
+
+---
+
+## 8. Latihan dan Evaluasi
+
+### Latihan dasar
+
+1. Buat topic `payments` dengan empat partition.
+2. Kirim lima event dengan dua customer key berbeda.
+3. Buktikan bahwa event dengan key sama masuk ke partition yang sama.
+4. Jalankan dua consumer dalam group `payment-workers`.
+5. Jelaskan pembagian partition yang terjadi.
+
+### Latihan menengah
+
+1. Hentikan salah satu consumer dan amati rebalance.
+2. Jalankan consumer dengan group baru dan baca event dari awal.
+3. Tunda proses consumer selama beberapa detik dan amati lag.
+4. Jelaskan risiko commit offset sebelum proses bisnis selesai.
+
+### Tantangan lanjutan
+
+Rancang pipeline:
+
+```text
+order-service -> orders -> payment-service -> payments -> notification-service
+```
+
+Dokumentasikan:
+
+- key setiap topic;
+- jumlah partition awal;
+- consumer group;
+- strategi retry dan dead-letter;
+- bentuk idempotency;
+- retention;
+- metric dan alert utama.
+
+### Pertanyaan evaluasi
+
+1. Apa perbedaan broker dan controller?
+2. Mengapa tiga controller dapat bertahan dari satu kegagalan, tetapi dua controller tidak memberi toleransi kegagalan yang sama?
+3. Di level mana Kafka menjamin ordering?
+4. Mengapa consumer group dengan enam consumer tidak dapat memproses enam event secara paralel jika topic hanya memiliki tiga partition?
+5. Apa yang terjadi jika proses bisnis berhasil tetapi consumer gagal sebelum commit offset?
+6. Mengapa replication factor `1` tidak sesuai untuk data production yang penting?
+
+---
+
+## Referensi Resmi
+
+- [Apache Kafka 4.3 Quick Start](https://kafka.apache.org/43/getting-started/quickstart/)
+- [Apache Kafka KRaft Operations](https://kafka.apache.org/43/operations/kraft/)
+- [Apache Kafka Broker Configuration](https://kafka.apache.org/43/configuration/broker-configs/)
+- [Apache Kafka Producer Configuration](https://kafka.apache.org/43/configuration/producer-configs/)
+- [Apache Kafka Consumer Configuration](https://kafka.apache.org/43/configuration/consumer-configs/)
+- [Apache Kafka Security](https://kafka.apache.org/43/security/security-overview/)
+
+> Selalu cocokkan dokumentasi dengan versi Kafka yang benar-benar digunakan di environment pelatihan dan production.
