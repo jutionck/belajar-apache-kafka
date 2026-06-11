@@ -5,7 +5,7 @@ Dokumen ini adalah bahan ajar teknis untuk trainee dengan tingkat pengalaman cam
 Contoh dalam dokumen menggunakan:
 
 - Apache Kafka 4.3 dalam mode KRaft
-- Java 17 atau lebih baru untuk menjalankan broker Kafka
+- Java 21 untuk menjalankan broker Kafka dan contoh aplikasi Java
 - Java, Node.js, dan Go sebagai contoh aplikasi client
 
 > **Catatan versi:** Kafka 4.x hanya menggunakan KRaft. ZooKeeper tetap dibahas secara singkat agar trainee dapat memahami dokumentasi atau sistem Kafka lama.
@@ -209,7 +209,7 @@ Mode gabungan cocok untuk development. Untuk deployment production yang penting,
 
 ### Prasyarat
 
-- Java 17 atau lebih baru
+- Java 21
 - Apache Kafka 4.3 binary distribution
 - Terminal Linux, macOS, atau WSL
 
@@ -365,6 +365,12 @@ Gunakan key untuk menjaga affinity event bisnis. Gunakan JSON hanya untuk memuda
 Contoh kode berfokus pada penggunaan Kafka client. Lengkapi `import`, entrypoint, dan graceful shutdown sesuai struktur proyek masing-masing bahasa.
 
 ### 4.1 Java
+
+Implementasi Java lengkap tersedia di repository ini:
+
+- `src/main/java/com/enigma/upskilling/KafkaProducerExample.java`
+- `src/main/java/com/enigma/upskilling/KafkaConsumerExample.java`
+- Panduan menjalankan aplikasi: [README.md](README.md#quick-start-menjalankan-aplikasi)
 
 Dependency Maven:
 

@@ -1,163 +1,306 @@
 # Belajar Apache Kafka
 
-Materi di repository ini membahas dasar Apache Kafka untuk praktik lokal menggunakan Java.
+Repository ini berisi project Java pendamping untuk materi [Apache Kafka dengan KRaft](KRAFT.md). Project memperagakan producer dan consumer menggunakan Kafka client secara langsung agar trainee dapat memahami konsep dasarnya sebelum memakai framework.
 
-Referensi resmi utama:
-- Introduction (Kafka 4.3): https://kafka.apache.org/43/getting-started/introduction/
-- Getting Started: https://kafka.apache.org/43/getting-started/
-- Quick Start: https://kafka.apache.org/43/getting-started/quickstart/
+## Yang Dipraktikkan
 
-Materi KRaft (tanpa ZooKeeper) dibahas lebih detail di:
-- `KRAFT.md`
-
----
-
-## Tujuan Belajar
-
-Setelah mengikuti materi ini, kamu diharapkan memahami:
-1. Peran **Producer**, **Consumer**, **Broker**, **Topic**, **Partition**, dan **Offset**.
-2. Cara membuat topic dan mengirim/menerima pesan via CLI Kafka.
-3. Cara menjalankan contoh Producer dan Consumer Java di repository ini.
-
----
+- Mengirim event JSON ke topic `orders`.
+- Menggunakan `customerId` sebagai key agar event customer yang sama masuk ke partition yang sama.
+- Melihat topic, partition, dan offset hasil pengiriman.
+- Membaca event melalui consumer group `order-workers-java`.
+- Melakukan commit offset setelah proses bisnis.
+- Menggunakan producer idempotent dengan `acks=all`.
 
 ## Prasyarat
 
-- JDK 8+ (sesuai project saat ini)
-- Apache Maven (`mvn`)
-- Apache Kafka lokal (disarankan mode KRaft)
+- Java 21
+- Apache Maven
+- Docker untuk jalur quick start, atau Apache Kafka 4.3 binary distribution
 
-> Catatan: gunakan `mvn`, bukan `./mvnw`, karena file wrapper Maven belum tersedia di repository ini.
+Periksa environment:
 
----
-
-## Ringkasan Konsep Inti
-
-Apache Kafka adalah **platform event streaming terdistribusi** untuk:
-1. Publish/subscribe event stream
-2. Menyimpan event stream secara andal
-3. Memproses event stream secara real-time maupun retrospektif
-
-Komponen utama:
-- **Producer**: aplikasi pengirim event
-- **Consumer**: aplikasi pembaca event
-- **Broker**: server Kafka
-- **Topic**: kategori event
-- **Partition**: pembagian topic untuk paralelisme
-- **Offset**: urutan event dalam partition
-- **Replication**: salinan data antar broker
-
----
-
-## Praktik Dasar CLI Kafka
-
-### 1) Buat Topic
-
-Linux/macOS:
 ```bash
-bin/kafka-topics.sh --create \
-  --topic topic-java \
+java -version
+mvn -version
+docker version
+```
+
+Perintah `docker version` tidak diperlukan jika memilih Kafka binary distribution.
+
+## Quick Start Menjalankan Aplikasi
+
+Jalankan seluruh perintah Maven dari root repository ini. Gunakan tiga terminal:
+
+| Terminal | Proses |
+|---|---|
+| Terminal 1 | Broker Kafka |
+| Terminal 2 | Java consumer |
+| Terminal 3 | Java producer dan perintah observasi |
+
+### 1. Jalankan Kafka dengan Docker
+
+Jalur ini direkomendasikan untuk praktik paling cepat.
+
+```bash
+docker run \
+  --name kafka-lab \
+  --detach \
+  --publish 9092:9092 \
+  apache/kafka:4.3.0
+```
+
+Pastikan container aktif:
+
+```bash
+docker ps --filter name=kafka-lab
+```
+
+Periksa proses startup:
+
+```bash
+docker logs kafka-lab
+```
+
+Broker siap digunakan setelah log startup selesai dan container tetap berstatus `Up`.
+
+### 2. Buat Topic
+
+Jalankan Kafka CLI di dalam container:
+
+```bash
+docker exec kafka-lab \
+  /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --create \
+  --if-not-exists \
+  --topic orders \
   --partitions 3 \
-  --replication-factor 1 \
-  --bootstrap-server localhost:9092
+  --replication-factor 1
 ```
 
-Windows:
+Periksa topic:
+
 ```bash
-.\bin\windows\kafka-topics.bat --create --topic topic-java --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092
+docker exec kafka-lab \
+  /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --describe \
+  --topic orders
 ```
 
-### 2) Lihat Daftar Topic
+Output harus menampilkan topic `orders` dengan tiga partition. Replication factor `1` hanya digunakan untuk lab satu broker.
 
-Linux/macOS:
+### 3. Build Project Java
+
 ```bash
-bin/kafka-topics.sh --list --bootstrap-server localhost:9092
+mvn clean verify
 ```
 
-Windows:
+Build berhasil jika output berakhir dengan:
+
+```text
+Tests run: 2, Failures: 0, Errors: 0
+BUILD SUCCESS
+```
+
+### 4. Jalankan Consumer
+
+Pada terminal 2:
+
 ```bash
-.\bin\windows\kafka-topics.bat --list --bootstrap-server localhost:9092
+mvn exec:java \
+  -Dexec.mainClass=com.enigma.upskilling.KafkaConsumerExample
 ```
 
-### 3) Kirim Pesan (Console Producer)
+Consumer siap menerima event ketika menampilkan:
 
-Linux/macOS:
+```text
+Menunggu event: topic=orders group=order-workers-java
+```
+
+Biarkan proses ini tetap berjalan.
+
+### 5. Jalankan Producer
+
+Pada terminal 3:
+
 ```bash
-bin/kafka-console-producer.sh --topic topic-java --bootstrap-server localhost:9092
+mvn exec:java \
+  -Dexec.mainClass=com.enigma.upskilling.KafkaProducerExample
 ```
 
-Windows:
+Producer akan mengirim satu event menggunakan key default `customer-42`. Contoh output:
+
+```text
+Terkirim: key=customer-42 topic=orders partition=... offset=... value=...
+```
+
+Terminal consumer kemudian menampilkan event yang diterima:
+
+```text
+Diterima: key=customer-42 partition=... offset=... value=...
+```
+
+Kirim event dengan customer lain:
+
 ```bash
-.\bin\windows\kafka-console-producer.bat --topic topic-java --bootstrap-server localhost:9092
+mvn exec:java \
+  -Dexec.mainClass=com.enigma.upskilling.KafkaProducerExample \
+  -Dexec.args=customer-99
 ```
 
-### 4) Terima Pesan (Console Consumer)
+Jalankan producer beberapa kali dengan key yang sama, lalu amati bahwa key tersebut masuk ke partition yang sama.
 
-Linux/macOS:
+### 6. Periksa Consumer Group dan Lag
+
 ```bash
-bin/kafka-console-consumer.sh --topic topic-java --from-beginning --bootstrap-server localhost:9092
+docker exec kafka-lab \
+  /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --describe \
+  --group order-workers-java
 ```
 
-Windows:
+Perhatikan:
+
+- `CURRENT-OFFSET`: posisi berikutnya yang akan dibaca consumer group;
+- `LOG-END-OFFSET`: posisi terbaru pada partition;
+- `LAG`: jumlah event yang belum diproses.
+
+### 7. Hentikan Aplikasi
+
+Hentikan consumer dengan `Ctrl+C`, lalu hentikan broker:
+
 ```bash
-.\bin\windows\kafka-console-consumer.bat --topic topic-java --from-beginning --bootstrap-server localhost:9092
+docker stop kafka-lab
 ```
 
----
+Container dapat dijalankan kembali tanpa membuat ulang topic:
 
-## Consumer Group (Dasar)
-
-Consumer group dipakai agar pembacaan pesan dalam satu group terbagi antar consumer (load balancing).
-
-Contoh:
 ```bash
-bin/kafka-console-consumer.sh --topic topic-java --bootstrap-server localhost:9092 --group belajar-group
+docker start kafka-lab
 ```
 
----
+Hapus container dan seluruh data lab ketika sudah tidak diperlukan:
 
-## Contoh Java di Repository Ini
-
-Source code contoh:
-- `src/main/java/com/enigma/upskilling/KafkaProducerExample.java`
-- `src/main/java/com/enigma/upskilling/KafkaConsumerExample.java`
-
-Dependensi Kafka client yang dipakai project:
-```xml
-<dependency>
-  <groupId>org.apache.kafka</groupId>
-  <artifactId>kafka-clients</artifactId>
-  <version>2.8.0</version>
-</dependency>
+```bash
+docker rm --force kafka-lab
 ```
 
-### Menjalankan contoh Java
+### Menjalankan Kafka Tanpa Docker
 
-1. Pastikan broker Kafka aktif di `localhost:9092` dan topic `topic-java` sudah dibuat.
-2. Build project:
-   ```bash
-   mvn -q -DskipTests compile
-   ```
-3. Jalankan consumer (terminal 1):
-   ```bash
-   mvn -q -DskipTests org.codehaus.mojo:exec-maven-plugin:3.5.0:java -Dexec.mainClass=com.enigma.upskilling.KafkaConsumerExample
-   ```
-4. Jalankan producer (terminal 2):
-   ```bash
-   mvn -q -DskipTests org.codehaus.mojo:exec-maven-plugin:3.5.0:java -Dexec.mainClass=com.enigma.upskilling.KafkaProducerExample
-   ```
+Jika menggunakan Kafka binary distribution, ikuti bagian **Lab Lokal: Menjalankan Kafka KRaft** pada [KRAFT.md](KRAFT.md). Setelah broker aktif, buat topic dengan:
 
----
+```bash
+bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --create \
+  --if-not-exists \
+  --topic orders \
+  --partitions 3 \
+  --replication-factor 1
+```
 
-## Materi Lanjutan
+Langkah build, consumer, dan producer tetap sama.
 
-Untuk materi modern Kafka tanpa ZooKeeper (KRaft), lanjutkan ke:
-- `KRAFT.md`
+## Konfigurasi Runtime
 
----
+Nilai default dapat diganti melalui environment variable:
 
-## Referensi Resmi
+| Environment variable | Default | Kegunaan |
+|---|---|---|
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Alamat awal cluster Kafka |
+| `KAFKA_TOPIC` | `orders` | Topic yang digunakan |
+| `KAFKA_CONSUMER_GROUP` | `order-workers-java` | Consumer group |
 
-- Kafka 4.3 Introduction: https://kafka.apache.org/43/getting-started/introduction/
-- Kafka 4.3 Getting Started: https://kafka.apache.org/43/getting-started/
-- Kafka 4.3 Quick Start: https://kafka.apache.org/43/getting-started/quickstart/
+Contoh menjalankan consumer dengan group baru:
+
+```bash
+KAFKA_CONSUMER_GROUP=order-workers-java-2 \
+  mvn exec:java \
+  -Dexec.mainClass=com.enigma.upskilling.KafkaConsumerExample
+```
+
+Karena group tersebut belum memiliki committed offset dan konfigurasi `auto.offset.reset` adalah `earliest`, consumer akan membaca event dari awal.
+
+## Mengamati Consumer Group
+
+Jika menggunakan Kafka binary distribution:
+
+```bash
+bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --describe \
+  --group order-workers-java
+```
+
+Perhatikan `CURRENT-OFFSET`, `LOG-END-OFFSET`, dan `LAG`.
+
+## Troubleshooting Menjalankan Aplikasi
+
+### Producer atau consumer terus mencoba terhubung
+
+Pastikan broker aktif:
+
+```bash
+docker ps --filter name=kafka-lab
+docker logs kafka-lab
+```
+
+Periksa juga bahwa `KAFKA_BOOTSTRAP_SERVERS` tidak menunjuk ke alamat yang salah.
+
+### Muncul `UnknownTopicOrPartitionException`
+
+Buat topic `orders` terlebih dahulu dan pastikan producer serta consumer memakai nilai `KAFKA_TOPIC` yang sama.
+
+### Consumer tidak menampilkan event lama
+
+Consumer group menyimpan committed offset. Jalankan consumer dengan group baru:
+
+```bash
+KAFKA_CONSUMER_GROUP=order-workers-java-baru \
+  mvn exec:java \
+  -Dexec.mainClass=com.enigma.upskilling.KafkaConsumerExample
+```
+
+### Port `9092` sudah digunakan
+
+Cari dan hentikan broker atau container Kafka lain yang menggunakan port tersebut sebelum menjalankan `kafka-lab`.
+
+### Build gagal karena versi Java
+
+Pastikan Maven benar-benar menggunakan Java 21:
+
+```bash
+mvn -version
+```
+
+Output harus menampilkan `Java version: 21`.
+
+## Struktur Project
+
+```text
+src/main/java/com/enigma/upskilling/
+├── KafkaExampleConfig.java
+├── KafkaProducerExample.java
+└── KafkaConsumerExample.java
+
+src/test/java/com/enigma/upskilling/
+└── KafkaExampleConfigTest.java
+```
+
+`KafkaExampleConfig` memusatkan konfigurasi yang digunakan producer dan consumer. Test memastikan konfigurasi reliability utama tidak berubah tanpa sengaja.
+
+## Catatan Penting
+
+- KRaft mengubah cara metadata cluster dikelola, tetapi API producer dan consumer tetap menggunakan broker melalui `bootstrap.servers`.
+- Commit offset menandai progres consumer group; commit tidak menghapus event dari Kafka.
+- Manual commit dalam contoh ini menunjukkan urutan `poll -> proses -> commit`. Sistem production tetap memerlukan idempotency, retry strategy, error handling, dan observability.
+- Contoh menggunakan JSON tanpa schema registry agar fokus pada konsep dasar.
+
+## Referensi
+
+- [Materi KRaft repository ini](KRAFT.md)
+- [Apache Kafka 4.3 Quick Start](https://kafka.apache.org/43/getting-started/quickstart/)
+- [Apache Kafka Producer Configuration](https://kafka.apache.org/43/configuration/producer-configs/)
+- [Apache Kafka Consumer Configuration](https://kafka.apache.org/43/configuration/consumer-configs/)
