@@ -371,6 +371,7 @@ Implementasi Java lengkap tersedia di repository ini:
 - `src/main/java/com/enigma/upskilling/KafkaProducerExample.java`
 - `src/main/java/com/enigma/upskilling/KafkaConsumerExample.java`
 - Panduan menjalankan aplikasi: [README.md](README.md#quick-start-menjalankan-aplikasi)
+- Rancangan tahap real application: [SPRING_BOOT_APP.md](SPRING_BOOT_APP.md)
 
 Dependency Maven:
 
